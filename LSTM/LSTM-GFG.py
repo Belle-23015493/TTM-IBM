@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from pathlib import Path
+
 from sklearn.preprocessing import MinMaxScaler
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout
@@ -15,22 +17,18 @@ from keras.layers import LSTM, Dense, Dropout
 # 1. LOAD DATA
 # ======================================================
 
-file_path = r"C:\FINAL YEAR PROJECT\datasets\master_half_hourly_dataset.csv"
-df = pd.read_csv(file_path)
+# This file lives in: project/LSTM/LSTM-GFG.py
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = PROJECT_ROOT / "datasets"
 
-print("[OK] Raw data shape:", df.shape)
-print(df.head())
+file_path = DATA_DIR / "forecast_dataset.csv"   # <--- uses forecast file now
+print(f"[INFO] Loading data from: {file_path}")
+
+df = pd.read_csv(file_path, parse_dates=["Timestamp"])
 
 # ======================================================
 # 2. BASIC PREPROCESSING (timestamp + numeric columns)
 # ======================================================
-
-# Convert Timestamp (day-first format in your CSV)
-df['Timestamp'] = pd.to_datetime(df['Timestamp'], dayfirst=True)
-
-# Drop non-numeric column used only as info
-if 'INFORMATION TYPE' in df.columns:
-    df = df.drop(columns=['INFORMATION TYPE'])
 
 # Sort by time just in case
 df = df.sort_values('Timestamp').reset_index(drop=True)
@@ -44,22 +42,23 @@ print(df.dtypes)
 #      next System Demand (Actual)
 # ======================================================
 
-target_col = 'System Demand (Actual)'
+target_col = "System_Demand"
 
 feature_cols = [
-    'System Demand (Actual)',     # include target history as an input
-    'NEM Demand (Actual)',
-    'NEM Demand (Forecast)',
-    'PRICE ($/MWh)',
-    'USEP_DEMAND (MW)',
-    'PSI_North', 'PSI_South', 'PSI_East', 'PSI_West', 'PSI_Central'
+    "System_Demand",     # include target history as an input
+    "USEP_Price_MWh",
+    "PSI_North",
+    "PSI_South",
+    "PSI_East",
+    "PSI_West",
+    "PSI_Central",
 ]
 
 data = df[feature_cols].values
 print("\n[OK] Feature matrix shape:", data.shape)
 
-n_features = data.shape[1]       # should be 10 with list above
-target_index = 0                 # first column = System Demand (Actual)
+n_features = data.shape[1]       # now 7 features
+target_index = feature_cols.index(target_col)  # 0, but clearer & safer
 
 # ======================================================
 # 4. SCALE DATA (MIN-MAX) – like in GFG example

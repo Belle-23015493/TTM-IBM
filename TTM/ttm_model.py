@@ -5,6 +5,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import torch
@@ -14,37 +15,36 @@ import torch.nn as nn
 # 1. LOAD DATA
 # =============================================================
 
-df = pd.read_excel("merged_usep_demand.xlsx")
+# This file lives in: project/TTM/ttm_model.py
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_FILE = PROJECT_ROOT / "datasets" / "forecast_dataset.csv"
 
-# Standardise column names
-df.rename(columns={
-    'date': 'Date',
-    'period': 'Period',
-    'demand (mw)': 'System_Demand'
-}, inplace=True)
+print(f"Loading data from: {DATA_FILE}")
+df = pd.read_csv(DATA_FILE, parse_dates=["Timestamp"])
 
-# Parse date
-df['Date'] = pd.to_datetime(df['Date'], format="%d-%b-%y", dayfirst=True)
+# Ensure sorted by time
+df = df.sort_values("Timestamp").reset_index(drop=True)
 
-# Build Datetime
-df["Datetime"] = df["Date"] + pd.to_timedelta((df["Period"] - 1) * 30, unit="m")
+TARGET_COL = "System_Demand"
 
-# Remove missing records
-df = df.dropna(subset=['System_Demand']).reset_index(drop=True)
-df = df.sort_values("Datetime").reset_index(drop=True)
+# Drop rows with missing target, just in case
+df = df.dropna(subset=[TARGET_COL]).reset_index(drop=True)
 
 print("Data loaded:", df.shape)
+print(df.head())
 
 # =============================================================
 # 2. TRAIN / TEST SPLIT
 # =============================================================
 
-train_df = df[df["Datetime"] < "2020-12-01"]
-test_df  = df[(df["Datetime"] >= "2020-12-01") & (df["Datetime"] < "2021-01-01")]
+# Train: everything before 2019
+train_df = df[df["Timestamp"] < "2019-01-01"]
+# Test: year 2019
+test_df  = df[(df["Timestamp"] >= "2019-01-01") & (df["Timestamp"] < "2020-01-01")]
 
 scaler = MinMaxScaler()
-train_scaled = scaler.fit_transform(train_df[['System_Demand']])
-test_scaled  = scaler.transform(test_df[['System_Demand']])
+train_scaled = scaler.fit_transform(train_df[[TARGET_COL]])
+test_scaled  = scaler.transform(test_df[[TARGET_COL]])
 
 SEQ_LEN = 48  # 1 day = 48 half-hour points
 
@@ -98,7 +98,7 @@ for epoch in range(40):
     print(f"Epoch {epoch+1}/40 | Loss = {loss.item():.6f}")
 
 # =============================================================
-# 4. DECEMBER FORECAST
+# 4. TEST FORECAST VISUALISATION (YEAR 2019)
 # =============================================================
 
 with torch.no_grad():
@@ -106,7 +106,7 @@ with torch.no_grad():
 
 pred = scaler.inverse_transform(pred_scaled)
 y_true = scaler.inverse_transform(y_test.numpy())
-plot_index = test_df["Datetime"][SEQ_LEN:].reset_index(drop=True)
+plot_index = test_df["Timestamp"][SEQ_LEN:].reset_index(drop=True)
 
 # Accuracy metrics
 rmse = np.sqrt(mean_squared_error(y_true, pred))
@@ -124,11 +124,11 @@ def add_accuracy_box():
 
 # ================= DECEMBER PLOTS =================
 
-# 1) Full December
+# 1) Full 2019
 plt.figure(figsize=(16,6))
 plt.plot(plot_index, y_true, label="Actual", linewidth=1)
 plt.plot(plot_index, pred, label="TTM Forecast", linewidth=1.6)
-plt.title("TinyTimeMixer Forecast — December 2020")
+plt.title("TinyTimeMixer Forecast — Year 2019")
 plt.legend()
 plt.xlabel("Date")
 plt.ylabel("System Demand (MW)")
@@ -140,7 +140,7 @@ plt.show()
 plt.figure(figsize=(16,6))
 plt.plot(plot_index[-48*7:], y_true[-48*7:], label="Actual", linewidth=1)
 plt.plot(plot_index[-48*7:], pred[-48*7:], label="TTM Forecast", linewidth=1.6)
-plt.title("TTM Forecast — Last 7 Days of December 2020")
+plt.title("TTM Forecast — Last 7 Days of 2019")
 plt.legend()
 plt.xlabel("Date")
 plt.ylabel("System Demand (MW)")
@@ -152,7 +152,7 @@ plt.show()
 plt.figure(figsize=(16,6))
 plt.plot(plot_index[-48:], y_true[-48:], label="Actual", linewidth=1)
 plt.plot(plot_index[-48:], pred[-48:], label="TTM Forecast", linewidth=1.6)
-plt.title("TTM Forecast — Last 24 Hours of 2020")
+plt.title("TTM Forecast — Last 24 Hours of 2019")
 plt.legend()
 plt.xlabel("Date")
 plt.ylabel("System Demand (MW)")
@@ -161,11 +161,11 @@ plt.tight_layout()
 plt.show()
 
 # =============================================================
-# 5. FULL YEAR 2020 PREDICTION
+# 5. FULL YEAR 2019 PREDICTION
 # =============================================================
 
-full_2020 = df[(df["Datetime"] >= "2020-01-01") & (df["Datetime"] < "2021-01-01")]
-full_scaled = scaler.transform(full_2020[['System_Demand']])
+full_2019 = df[(df["Timestamp"] >= "2019-01-01") & (df["Timestamp"] < "2020-01-01")]
+full_scaled = scaler.transform(full_2019[[TARGET_COL]])
 
 X_full, y_full = make_sequences(full_scaled, SEQ_LEN)
 X_full = torch.tensor(X_full, dtype=torch.float32)
@@ -175,27 +175,33 @@ with torch.no_grad():
 
 full_pred = scaler.inverse_transform(full_pred_scaled)
 full_true = scaler.inverse_transform(y_full)
-full_index = full_2020["Datetime"][SEQ_LEN:].reset_index(drop=True)
+full_index = full_2019["Timestamp"][SEQ_LEN:].reset_index(drop=True)
 
 # =============================================================
 # 6. MONTHLY AVERAGE (CLEAN JAN–DEC GRAPH)
 # =============================================================
 
 monthly_df = pd.DataFrame({
-    "Datetime": full_index,
+    "Timestamp": full_index,
     "Actual": full_true.flatten(),
     "Forecast": full_pred.flatten()
 })
 
-monthly_df["Month"] = monthly_df["Datetime"].dt.month
-monthly_avg = monthly_df.groupby("Month").mean()
+monthly_df["Month"] = monthly_df["Timestamp"].dt.month
+monthly_avg = monthly_df.groupby("Month").mean(numeric_only=True)
 
 # Clean Jan–Dec monthly average plot
 plt.figure(figsize=(12,5))
-plt.plot(monthly_avg.index, monthly_avg["Actual"], marker="o", linewidth=2, label="Actual (Monthly Avg)")
+plt.plot(
+    monthly_avg.index, 
+    monthly_avg["Actual"], 
+    marker="o", 
+    linewidth=2, 
+    label="Actual (Monthly Avg)",
+)
 plt.plot(monthly_avg.index, monthly_avg["Forecast"], marker="o", linewidth=2, label="TTM Forecast (Monthly Avg)")
 
-plt.title("TinyTimeMixer Forecast — Monthly Average (Jan–Dec 2020)", fontsize=15)
+plt.title("TinyTimeMixer Forecast — Monthly Average (Jan–Dec 2019)")
 plt.xlabel("Month (1–12)")
 plt.ylabel("System Demand (MW)")
 plt.xticks(range(1, 13))

@@ -2,14 +2,16 @@ from pathlib import Path
 import pandas as pd
 
 # ===================== GLOBAL CONFIG ===================== #
-BASE_DIR = Path(
-    r"C:\Users\belle\OneDrive - Republic Polytechnic\Desktop\Curriculum\Year 3 Sem 2\FYP\python\datasets"
-)
+# Automatically find the project root and datasets folder
+# This file lives in: project/cleaned data/build_master_dataset.py
+# So project root is one level up from this file.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+BASE_DIR = PROJECT_ROOT / "datasets"
 
-# Raw PSI file
+# Raw PSI file (inside datasets/)
 PSI_FILE = BASE_DIR / "historical-24-hr-psi_010414-311219.csv"
 
-# Final single joined output (only one file!)
+# Final single joined output (only one file!), also saved in datasets/
 MASTER_OUT = BASE_DIR / "master_half_hourly_dataset.csv"
 # ========================================================= #
 
@@ -196,19 +198,22 @@ def period_to_time(period) -> str | None:
 
 def find_usep_root(base_dir: Path) -> Path:
     """
-    Try to locate the USEP root folder.
-    Adjust the candidates below to match your actual folder name if needed.
-    """
-    candidate1 = base_dir / "usep-2015-2020" / "usep"
-    candidate2 = base_dir / "usep-2015-2020"
-    candidate3 = base_dir / "usep"  # fallback if you just named it 'usep'
+    Locate the USEP root folder.
 
-    for c in [candidate1, candidate2, candidate3]:
+    Expected structure:
+        base_dir / "usep-2015-2020" / "usep-raw" / <year> / *.csv
+    """
+    candidate1 = base_dir / "usep-2015-2020" / "usep-raw"   # <-- your real path
+    candidate2 = base_dir / "usep-2015-2020"                # just in case
+    candidate3 = base_dir / "usep"                          # fallback
+
+    for c in (candidate1, candidate2, candidate3):
         if c.is_dir():
             return c
 
     raise FileNotFoundError(
-        "Could not find USEP folder. Please check and update find_usep_root()."
+        "Could not find USEP folder. "
+        "Expected something like 'datasets/usep-2015-2020/usep-raw/'."
     )
 
 
