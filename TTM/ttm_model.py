@@ -27,8 +27,19 @@ df = df.sort_values("Timestamp").reset_index(drop=True)
 
 TARGET_COL = "System_Demand"
 
-# Drop rows with missing target, just in case
-df = df.dropna(subset=[TARGET_COL]).reset_index(drop=True)
+# Feature set (same as LSTM script)
+feature_cols = [
+    "System_Demand",
+    "USEP_Price_MWh",
+    "PSI_North",
+    "PSI_South",
+    "PSI_East",
+    "PSI_West",
+    "PSI_Central",
+]
+
+# Drop rows with missing features, just in case
+df = df.dropna(subset=feature_cols).reset_index(drop=True)
 
 print("Data loaded:", df.shape)
 print(df.head())
@@ -42,57 +53,73 @@ train_df = df[df["Timestamp"] < "2019-01-01"]
 # Test: year 2019
 test_df  = df[(df["Timestamp"] >= "2019-01-01") & (df["Timestamp"] < "2020-01-01")]
 
-scaler = MinMaxScaler()
-train_scaled = scaler.fit_transform(train_df[[TARGET_COL]])
-test_scaled  = scaler.transform(test_df[[TARGET_COL]])
+# Scale ALL features together
+scaler_all = MinMaxScaler()
+train_scaled_all = scaler_all.fit_transform(train_df[feature_cols])
+test_scaled_all  = scaler_all.transform(test_df[feature_cols])
+
+# Separate scaler for the target so we can inverse-transform predictions
+scaler_y = MinMaxScaler()
+scaler_y.fit(train_df[[TARGET_COL]])
 
 SEQ_LEN = 48  # 1 day = 48 half-hour points
+target_index = feature_cols.index(TARGET_COL)  # 0, but explicit
 
-def make_sequences(data, seq_len=48):
+
+def make_sequences(data, seq_len=48, target_col_index=0):
+    """
+    data: 2D array (n_samples, n_features) – scaled
+    """
     X, y = [], []
-    for i in range(len(data) - seq_len):
-        X.append(data[i:i+seq_len])
-        y.append(data[i+seq_len])
+    for i in range(seq_len, len(data)):
+        X.append(data[i - seq_len:i, :])         # past seq_len rows
+        y.append(data[i, target_col_index])      # target at time i
     return np.array(X), np.array(y)
 
-X_train, y_train = make_sequences(train_scaled, SEQ_LEN)
-X_test, y_test   = make_sequences(test_scaled, SEQ_LEN)
+X_train, y_train = make_sequences(train_scaled_all, SEQ_LEN, target_index)
+X_test,  y_test  = make_sequences(test_scaled_all,  SEQ_LEN, target_index)
 
-X_train = torch.tensor(X_train, dtype=torch.float32)
-y_train = torch.tensor(y_train, dtype=torch.float32)
-X_test  = torch.tensor(X_test, dtype=torch.float32)
-y_test  = torch.tensor(y_test, dtype=torch.float32)
+X_train_t = torch.tensor(X_train, dtype=torch.float32)
+y_train_t = torch.tensor(y_train.reshape(-1, 1), dtype=torch.float32)
+X_test_t  = torch.tensor(X_test,  dtype=torch.float32)
+y_test_t  = torch.tensor(y_test.reshape(-1, 1),  dtype=torch.float32)
+
+n_features = X_train.shape[2]
+
 
 # =============================================================
 # 3. TTM MODEL
 # =============================================================
 
 class TinyTimeMixer(nn.Module):
-    def __init__(self, seq_len=48, hidden=256):
+    def __init__(self, seq_len=48, n_features=1, hidden=256):
         super().__init__()
         self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(seq_len, hidden)
+        self.fc1 = nn.Linear(seq_len * n_features, hidden)
         self.dropout = nn.Dropout(0.2)
         self.fc2 = nn.Linear(hidden, hidden)
         self.fc3 = nn.Linear(hidden, 1)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.flatten(x)
+        # x shape: (batch_size, seq_len, n_features)
+        x = self.flatten(x)                 # -> (batch_size, seq_len * n_features)
         x = self.relu(self.fc1(x))
         x = self.dropout(x)
         x = self.relu(self.fc2(x))
-        return self.fc3(x)
+        return self.fc3(x)                  # -> (batch_size, 1)
 
-model = TinyTimeMixer(seq_len=SEQ_LEN, hidden=256)
+
+model = TinyTimeMixer(seq_len=SEQ_LEN, n_features=n_features, hidden=256)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
 print("\nTraining TinyTimeMixer...")
+model.train()
 for epoch in range(40):
     optimizer.zero_grad()
-    output = model(X_train)
-    loss = criterion(output, y_train)
+    output = model(X_train_t)
+    loss = criterion(output, y_train_t)
     loss.backward()
     optimizer.step()
     print(f"Epoch {epoch+1}/40 | Loss = {loss.item():.6f}")
@@ -101,11 +128,12 @@ for epoch in range(40):
 # 4. TEST FORECAST VISUALISATION (YEAR 2019)
 # =============================================================
 
+model.eval()
 with torch.no_grad():
-    pred_scaled = model(X_test).numpy()
+    pred_scaled = model(X_test_t).numpy()
 
-pred = scaler.inverse_transform(pred_scaled)
-y_true = scaler.inverse_transform(y_test.numpy())
+pred = scaler_y.inverse_transform(pred_scaled)
+y_true = scaler_y.inverse_transform(y_test.reshape(-1, 1))
 plot_index = test_df["Timestamp"][SEQ_LEN:].reset_index(drop=True)
 
 # Accuracy metrics
@@ -122,7 +150,7 @@ def add_accuracy_box():
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
     )
 
-# ================= DECEMBER PLOTS =================
+# ================= TEST PLOTS (2019) =================
 
 # 1) Full 2019
 plt.figure(figsize=(16,6))
@@ -165,16 +193,16 @@ plt.show()
 # =============================================================
 
 full_2019 = df[(df["Timestamp"] >= "2019-01-01") & (df["Timestamp"] < "2020-01-01")]
-full_scaled = scaler.transform(full_2019[[TARGET_COL]])
+full_scaled_all = scaler_all.transform(full_2019[feature_cols])
 
-X_full, y_full = make_sequences(full_scaled, SEQ_LEN)
-X_full = torch.tensor(X_full, dtype=torch.float32)
+X_full, y_full = make_sequences(full_scaled_all, SEQ_LEN, target_index)
+X_full_t = torch.tensor(X_full, dtype=torch.float32)
 
 with torch.no_grad():
-    full_pred_scaled = model(X_full).numpy()
+    full_pred_scaled = model(X_full_t).numpy()
 
-full_pred = scaler.inverse_transform(full_pred_scaled)
-full_true = scaler.inverse_transform(y_full)
+full_pred = scaler_y.inverse_transform(full_pred_scaled)              # (N, 1)
+full_true = scaler_y.inverse_transform(y_full.reshape(-1, 1))         # (N, 1)
 full_index = full_2019["Timestamp"][SEQ_LEN:].reset_index(drop=True)
 
 # =============================================================
