@@ -1,0 +1,6 @@
+# Ignore the 1GB temperature files specifically
+datasets/HistoricalAirTemperatureacrossSingapore2017.csv
+datasets/HistoricalAirTemperatureacrossSingapore2018.csv
+datasets/HistoricalAirTemperatureacrossSingapore2019.csv
+
+# Keep everything else in datasets/
