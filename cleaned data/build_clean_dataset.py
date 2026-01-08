@@ -49,7 +49,11 @@ def clean_half_hourly_demand(base_dir: Path) -> pd.DataFrame:
     all_weeks: list[pd.DataFrame] = []
 
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    metrics = ["System Demand (Actual)"]
+    metrics = [
+    "System Demand (Actual)",
+    "NEM Demand (Actual)",
+    "NEM Demand (Forecast)"
+    ]
 
     # Build the expected column names: Time + 7*3 metric columns
     expected_cols = ["Time"]
@@ -159,6 +163,11 @@ def clean_half_hourly_demand(base_dir: Path) -> pd.DataFrame:
     # ---- Combine all weeks ----
     hh = pd.concat(all_weeks, ignore_index=True)
     hh = hh.sort_values("Timestamp").reset_index(drop=True)
+
+    # Keep only Timestamp and System Demand (Actual)
+    hh = hh[["Timestamp", "System Demand (Actual)"]]
+
+    hh = hh.rename(columns={"System Demand (Actual)": "System Demand"})
 
     return hh
 
